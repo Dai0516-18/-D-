@@ -1,0 +1,1033 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FPS×戦略 試作版</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#223;font-family:sans-serif;color:#fff}
+  body.nocursor, body.nocursor *{cursor:none !important}
+  #c{display:block;width:100%;height:100%}
+  #hud{position:fixed;inset:0;pointer-events:none}
+  #top{position:absolute;top:10px;left:50%;transform:translateX(-50%);text-align:center}
+  #timer{font-size:28px;font-weight:bold;text-shadow:0 2px 4px #000}
+  .bar{width:260px;height:12px;background:#0008;border:1px solid #fff6;margin:3px auto;border-radius:6px;overflow:hidden}
+  .bar>i{display:block;height:100%}
+  #ownHpBar>i{background:#4da3ff}#enemyHpBar>i{background:#ff5a5a}
+  #energyBar{width:200px}#energyBar>i{background:#ffd94d}
+  #xp{font-size:12px;text-shadow:0 1px 2px #000}
+  #hp{position:absolute;left:12px;bottom:12px;font-size:18px;text-shadow:0 2px 4px #000}
+  #cross{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:22px;text-shadow:0 0 4px #000}
+  #cross.ads{font-size:15px;color:#ffe14d}
+  #log{position:absolute;left:12px;top:12px;font-size:13px;text-shadow:0 1px 2px #000;line-height:1.5}
+  #summons{position:absolute;right:12px;bottom:12px;display:flex;gap:8px;pointer-events:auto}
+  .sum{width:92px;padding:8px 6px;background:#000a;border:2px solid #fff;border-radius:8px;text-align:center;cursor:pointer;font-size:13px}
+  .sum.locked{opacity:.45;border-color:#888;cursor:not-allowed}
+  .sum b{font-size:15px}
+  #msg{position:absolute;left:50%;bottom:110px;transform:translateX(-50%);font-size:16px;text-shadow:0 2px 4px #000}
+  #cursorHint{position:absolute;left:50%;bottom:150px;transform:translateX(-50%);font-size:14px;text-shadow:0 2px 4px #000}
+  .overlay{position:fixed;inset:0;background:#000c;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;z-index:5}
+  .overlay h1{margin:0;font-size:30px}
+  .overlay p{margin:0;color:#ddd;line-height:1.7}
+  .overlay button{pointer-events:auto;font-size:18px;padding:12px 28px;border-radius:10px;border:0;background:#ffd94d;cursor:pointer}
+  .hidden{display:none}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud">
+  <div id="log"></div>
+  <div id="top">
+    <div id="timer">0:30</div>
+    <div class="bar" id="ownHpBar"><i style="width:100%"></i></div>
+    <div class="bar" id="enemyHpBar"><i style="width:100%"></i></div>
+    <div class="bar" id="energyBar"><i style="width:20%"></i></div>
+    <div id="xp">エネルギー 20 / 100　Lv1　経験値 0/100</div>
+  </div>
+  <div id="hp">HP 100</div>
+  <div id="cross">＋</div>
+  <div id="msg"></div>
+  <div id="cursorHint" class="hidden">カーソル表示中。クリックするとまた消えるよ</div>
+  <div id="summons">
+    <div class="sum" data-kind="slime"><b>スライム</b><br>1キー<br><span class="cost"></span></div>
+    <div class="sum" data-kind="golem"><b>ゴーレム</b><br>2キー<br><span class="cost"></span></div>
+    <div class="sum" data-kind="wyvern"><b>ワイバーン</b><br>3キー<br><span class="cost"></span></div>
+  </div>
+</div>
+<div class="overlay" id="start">
+  <h1>FPS×戦略 試作版</h1>
+  <p>【デバッグ用一時設定】30秒間、ゴーレムは10秒後、ワイバーンは20秒後から呼べる。解放後のモンスターは無料で出せる。本番は3分・60秒・120秒に戻す。<br>
+  モンスターを呼んで敵の本丸を壊そう。<br>
+  WASDで移動、マウスを動かすだけで向きが変わる。左クリックで単発（連打でたくさん撃てる）、右クリック長押しでADS（ズームして狙う）。<br>
+  開始したらクリックでカーソルが消えるよ。ESCでカーソルを戻せるよ。<br>
+  1/2/3キーで召喚。スライムは最初から、ゴーレムは10秒後、ワイバーンは20秒後から呼べる。<br>
+  ステージは雨：水スライムのコスト1.5倍、炎ワイバーンの威力半減。<br>
+  スライム・ゴーレム・ワイバーンはUnityのZipのモデルを使っているよ。ワイバーンは羽をはばたかせるよ。</p>
+  <button id="startBtn">ゲーム開始</button>
+</div>
+<div class="overlay hidden" id="end">
+  <h1 id="endTitle"></h1>
+  <p id="endStats"></p>
+  <button id="againBtn">もう一度遊ぶ</button>
+</div>
+<script src="assets/three.min.js"></script>
+<script src="game-logic.js"></script>
+<script>
+(function () {
+  'use strict';
+  // Three.js / ルールが読めなかったときは、死んだ開始ボタンにしない
+  if (typeof THREE === 'undefined' || !window.FPSLogic) {
+    var sb = document.getElementById('startBtn');
+    if (sb) sb.textContent = '読み込みに失敗したよ。もう一度開き直してみて';
+    return;
+  }
+  var L = window.FPSLogic;
+  var state = L.createGame();
+  var canvas = document.getElementById('c');
+
+  // ---- Three.js の画面 ----
+  var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+  renderer.setPixelRatio(window.devicePixelRatio || 1);
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  var scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x8fa3b8);
+  scene.fog = new THREE.Fog(0x8fa3b8, 30, 110);
+  var camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 200);
+  camera.rotation.order = 'YXZ';
+  scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+  var sun = new THREE.DirectionalLight(0xffffff, 0.9);
+  sun.position.set(20, 40, 10);
+  scene.add(sun);
+
+  // 地面と本丸
+  var ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(110, 100),
+    new THREE.MeshLambertMaterial({ color: 0x5a7d4a }));
+  ground.rotation.x = -Math.PI / 2;
+  scene.add(ground);
+  // 本丸は城の天守風に作り込む：石垣の台座＋2段の天守＋屋根＋門・柱・窓・旗・のぼり。
+  // 石垣・天守・屋根は当たり判定あり（userData.type='base'）。窓・柱・旗などの飾りは
+  // 当たり判定なし（弾はすり抜けて後ろの天守に当たる）。
+  // facing は門のある方向（自軍 -1＝敵側、敵軍 +1＝自軍側）。
+  function makeBase(z, color, facing) {
+    var g = new THREE.Group();
+    var stone = new THREE.MeshLambertMaterial({ color: 0x8d8d94 });
+    var stoneDark = new THREE.MeshLambertMaterial({ color: 0x75757c });
+    var plaster = new THREE.MeshLambertMaterial({ color: 0xf2ead8 });
+    var roofMat = new THREE.MeshLambertMaterial({ color: 0x333344 });
+    var wood = new THREE.MeshLambertMaterial({ color: 0x5a3a22 });
+    var dark = new THREE.MeshLambertMaterial({ color: 0x22222e });
+    var faction = new THREE.MeshLambertMaterial({ color: color });
+    function part(geo, mat, x, y, zz, isHit) {
+      var m = new THREE.Mesh(geo, mat);
+      m.position.set(x, y, zz);
+      if (isHit) m.userData.type = 'base';
+      g.add(m);
+      return m;
+    }
+    // 石垣（2段の台座）
+    part(new THREE.BoxGeometry(14, 2, 10), stone, 0, 1, 0, true);
+    part(new THREE.BoxGeometry(12, 1.5, 8.5), stoneDark, 0, 2.75, 0, true);
+    // 天守1段目（陣営色。ここが当たり判定の中心）
+    part(new THREE.BoxGeometry(10, 6, 6), faction, 0, 6.5, 0, true);
+    // 1段目の屋根（四角すい）
+    var roof1 = part(new THREE.ConeGeometry(7.5, 2.5, 4), roofMat, 0, 10.75, 0, true);
+    roof1.rotation.y = Math.PI / 4;
+    // 天守2段目（白壁）
+    part(new THREE.BoxGeometry(7, 3.5, 4.5), plaster, 0, 13.75, 0, true);
+    // 2段目の屋根（四角すい）
+    var roof2 = part(new THREE.ConeGeometry(5.5, 2.5, 4), roofMat, 0, 16.75, 0, true);
+    roof2.rotation.y = Math.PI / 4;
+    // てっぺんの飾り（金色）
+    part(new THREE.BoxGeometry(0.5, 0.9, 0.5),
+      new THREE.MeshLambertMaterial({ color: 0xd8a928 }), 0, 18.4, 0, false);
+    // 門（戦場側の面）と門柱
+    part(new THREE.BoxGeometry(2.6, 3.2, 0.5), wood, 0, 5, facing * 3.1, false);
+    part(new THREE.BoxGeometry(0.5, 3.2, 0.5), wood, -1.6, 5, facing * 3.2, false);
+    part(new THREE.BoxGeometry(0.5, 3.2, 0.5), wood, 1.6, 5, facing * 3.2, false);
+    // 1段目の柱（四隅）
+    [[-4.6, -2.6], [4.6, -2.6], [-4.6, 2.6], [4.6, 2.6]].forEach(function (p) {
+      part(new THREE.BoxGeometry(0.5, 6, 0.5), plaster, p[0], 6.5, p[1], false);
+    });
+    // 窓（1段目の戦場側に3つ、2段目に2つ）
+    [-3, 0, 3].forEach(function (x) {
+      part(new THREE.BoxGeometry(0.9, 1.1, 0.2), dark, x, 7.5, facing * 3.05, false);
+    });
+    [-1.8, 1.8].forEach(function (x) {
+      part(new THREE.BoxGeometry(0.8, 1, 0.2), dark, x, 14, facing * 2.3, false);
+    });
+    // 旗（てっぺん、陣営色）
+    part(new THREE.CylinderGeometry(0.07, 0.07, 3, 6), wood, 0, 19.3, 0, false);
+    part(new THREE.BoxGeometry(1.8, 1, 0.06), faction, 0.95, 20.3, 0, false);
+    // のぼり（門の両脇、陣営色）
+    part(new THREE.BoxGeometry(0.7, 2.6, 0.06), faction, -2.8, 4.8, facing * 3.2, false);
+    part(new THREE.BoxGeometry(0.7, 2.6, 0.06), faction, 2.8, 4.8, facing * 3.2, false);
+    g.position.z = z;
+    scene.add(g);
+    return g;
+  }
+  var ownBaseGroup = makeBase(38, 0x2f6fd6, -1);
+  var enemyBaseGroup = makeBase(-38, 0xd63a3a, 1);
+
+  // 雨（ステージ「雨」の見た目）
+  var rainCount = 600, rainPos = new Float32Array(rainCount * 3);
+  for (var i = 0; i < rainCount; i++) {
+    rainPos[i * 3] = (Math.random() - 0.5) * 100;
+    rainPos[i * 3 + 1] = Math.random() * 30;
+    rainPos[i * 3 + 2] = (Math.random() - 0.5) * 90;
+  }
+  var rainGeo = new THREE.BufferGeometry();
+  rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPos, 3));
+  var rain = new THREE.Points(rainGeo, new THREE.PointsMaterial({ color: 0xcfe4ff, size: 0.18 }));
+  scene.add(rain);
+
+  // 敵AIの射手（赤い人形。敵本丸の前にいて、プレイヤーを撃ってくる）
+  var shooter = new THREE.Group();
+  var sBody = new THREE.Mesh(new THREE.BoxGeometry(1.2, 2.2, 0.8),
+    new THREE.MeshLambertMaterial({ color: 0xd63a3a }));
+  sBody.position.y = 1.1;
+  shooter.add(sBody);
+  var sHead = new THREE.Mesh(new THREE.SphereGeometry(0.45, 12, 10),
+    new THREE.MeshLambertMaterial({ color: 0xffd9b0 }));
+  sHead.position.y = 2.6;
+  shooter.add(sHead);
+  shooter.position.set(0, 0, -30);
+  scene.add(shooter);
+  // 弾の線（撃った瞬間だけ出す）
+  var tracerGeo = new THREE.BufferGeometry();
+  tracerGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+  var tracer = new THREE.Line(tracerGeo, new THREE.LineBasicMaterial({ color: 0xff4444, transparent: true, opacity: 0 }));
+  scene.add(tracer);
+  var tracerUntil = 0;
+
+  // ---- カーソル表示・ポインタロック ----
+  // ゲーム開始後はマウスカーソルを消す。ESCでカーソルを戻す。
+  // ロックが取れる環境：ポインタロックでカーソルを消す（ロック中のESCは
+  // ブラウザが処理してロックを外す）。ロックが取れない環境（Museのファイル
+  // 表示など）：CSSでカーソルを隠し、画面の端にマウスがある間は視点を回し
+  // 続ける「端ステアリング」で代用する（後ろのメインループで処理）。
+  var lockFailed = false;      // ポインタロック要求が失敗した（使えない環境）
+  var lockEverSucceeded = false; // 一度でもロックが取れた
+  var lockRequestedAt = 0;     // 最後にロックを要求した時刻
+  var cursorShown = false;     // ESCでカーソルを戻した状態
+  function isPlaying() {
+    return document.getElementById('start').classList.contains('hidden') && !state.over;
+  }
+  function refreshCursor() {
+    var locked = document.pointerLockElement === canvas;
+    // ロック中はカーソルなし。ロックが使えない環境のプレイ中もカーソルなし。
+    // ESCで戻したときだけカーソルを出してヒントを表示する。
+    var hide = locked || (isPlaying() && lockFailed && !cursorShown);
+    document.body.classList.toggle('nocursor', hide);
+    document.getElementById('cursorHint').classList.toggle('hidden',
+      !(isPlaying() && !locked && cursorShown));
+  }
+  document.addEventListener('pointerlockchange', function () {
+    if (document.pointerLockElement === canvas) {
+      lockEverSucceeded = true;
+      cursorShown = false;
+    } else if (isPlaying()) {
+      // ロックが外れた（ESCなど）。カーソルを出して、戻し方を教える。
+      cursorShown = true;
+    }
+    refreshCursor();
+  });
+  document.addEventListener('pointerlockerror', function () {
+    lockFailed = true;
+    refreshCursor();
+  });
+  // ポインタロックが失敗してもゲームが始まるようにする。
+  // 失敗を黙って握りつぶさず、lockFailed に記録してフォールバック（カーソル
+  // 非表示＋端ステアリング）に切り替える。
+  function safePointerLock() {
+    lockRequestedAt = performance.now();
+    try {
+      var p = canvas.requestPointerLock();
+      if (p && p.catch) p.catch(function () { lockFailed = true; refreshCursor(); });
+    } catch (e) { lockFailed = true; refreshCursor(); }
+  }
+  // ---- モンスターの見た目（仮の形） ----
+  var monsterMeshes = {}; // id -> Group
+  var KINDS = {
+    slime: function () {
+      var g = new THREE.Group();
+      var b = new THREE.Mesh(new THREE.SphereGeometry(0.9, 16, 12),
+        new THREE.MeshLambertMaterial({ color: 0x4dd0a6 }));
+      b.position.y = 0.8;
+      g.add(b);
+      return g;
+    },
+    golem: function () {
+      var g = new THREE.Group();
+      var b = new THREE.Mesh(new THREE.BoxGeometry(1.8, 2.2, 1.8),
+        new THREE.MeshLambertMaterial({ color: 0x8a8a92 }));
+      b.position.y = 1.1;
+      g.add(b);
+      var h = new THREE.Mesh(new THREE.BoxGeometry(1, 0.9, 1),
+        new THREE.MeshLambertMaterial({ color: 0x6a6a72 }));
+      h.position.y = 2.6;
+      g.add(h);
+      return g;
+    },
+    wyvern: function () {
+      var g = new THREE.Group();
+      var b = new THREE.Mesh(new THREE.ConeGeometry(0.9, 2.6, 8),
+        new THREE.MeshLambertMaterial({ color: 0xe88030 }));
+      b.rotation.x = Math.PI / 2;
+      b.position.y = 2.2;
+      g.add(b);
+      [-1, 1].forEach(function (s) {
+        var w = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.1, 1.1),
+          new THREE.MeshLambertMaterial({ color: 0xc96a20 }));
+        w.position.set(s * 1.4, 2.4, 0);
+        g.add(w);
+      });
+      return g;
+    }
+  };
+  // ---- UnityのZipのモデル（GLB） ----
+  // DBHゲームの簡易GLBローダーと同じ方式：fetchでGLBを読み、position/normal/indices
+  // からBufferGeometryを作る。GLTFLoaderは使わない。読み込み失敗時は仮の形にフォールバック。
+  // 1ファイル版では window.__GLB_DATA__ に data URI が入っている。
+  var glbTemplates = {}; // kind -> {root, height}（ワイバーンは {skinned:true} の目印だけ）
+  var glbRaw = {}; // kind -> ArrayBuffer（ワイバーンはスキンメッシュなので召喚ごとにパースし直す）
+  var GLB_FILE = { slime: 'slime.glb', golem: 'golem.glb', wyvern: 'dragon.glb' };
+  function glbAccessor(data, bin, accIdx) {
+    var acc = data.accessors[accIdx], bv = data.bufferViews[acc.bufferView];
+    var TC = { 5120: Int8Array, 5121: Uint8Array, 5122: Int16Array, 5123: Uint16Array, 5125: Uint32Array, 5126: Float32Array };
+    var NC = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT4: 16 };
+    var Arr = TC[acc.componentType], ncomp = NC[acc.type], bpe = Arr.BYTES_PER_ELEMENT;
+    var off = (bv.byteOffset || 0) + (acc.byteOffset || 0), step = bv.byteStride || bpe * ncomp;
+    var out = new Arr(acc.count * ncomp);
+    var dv = new DataView(bin.buffer, bin.byteOffset, bin.byteLength);
+    var read = acc.componentType === 5126 ? function (o) { return dv.getFloat32(o, true); }
+      : acc.componentType === 5125 ? function (o) { return dv.getUint32(o, true); }
+      : acc.componentType === 5123 ? function (o) { return dv.getUint16(o, true); }
+      : acc.componentType === 5121 ? function (o) { return dv.getUint8(o, true); }
+      : acc.componentType === 5122 ? function (o) { return dv.getInt16(o, true); }
+      : function (o) { return dv.getInt8(o, true); };
+    for (var i = 0; i < acc.count; i++) for (var c = 0; c < ncomp; c++) out[i * ncomp + c] = read(off + i * step + c * bpe);
+    return out;
+  }
+  function parseGLB(buf) {
+    var dv = new DataView(buf);
+    if (dv.getUint32(0, true) !== 0x46546C67) throw new Error('bad glb');
+    var total = dv.getUint32(8, true), off = 12, json = null, bin = null;
+    while (off + 8 <= total) {
+      var len = dv.getUint32(off, true), type = dv.getUint32(off + 4, true);
+      if (type === 0x4E4F534A) json = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, off + 8, len)));
+      else if (type === 0x004E4942) bin = new Uint8Array(buf, off + 8, len);
+      off += 8 + len;
+    }
+    var mats = (json.materials || []).map(function (m) {
+      var p = m.pbrMetallicRoughness || {}, c = p.baseColorFactor || [1, 1, 1, 1];
+      var mt = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(c[0], c[1], c[2]),
+        roughness: p.roughnessFactor != null ? p.roughnessFactor : 0.7,
+        metalness: p.metallicFactor != null ? p.metallicFactor : 0
+      });
+      // alpha 0 はFBX由来のゴミ値のことがあるので、0<c<1 のときだけ透明にする
+      if (c[3] > 0 && c[3] < 1) { mt.transparent = true; mt.opacity = c[3]; }
+      if (m.doubleSided) mt.side = THREE.DoubleSide;
+      return mt;
+    });
+    var defMat = new THREE.MeshStandardMaterial({ color: 0xcccccc, roughness: 0.7 });
+    // スキン（ドラゴンの翼）対応：ジョイントになるノードは THREE.Bone で作る
+    var jointSet = {};
+    (json.skins || []).forEach(function (sk) { (sk.joints || []).forEach(function (j) { jointSet[j] = true; }); });
+    var nodeObjects = []; // node index -> Object3D/Bone
+    var skinnedMeshes = []; // {mesh, skin}
+    function buildNode(idx) {
+      var nd = json.nodes[idx], obj = jointSet[idx] ? new THREE.Bone() : new THREE.Object3D();
+      obj.name = nd.name || '';
+      if (nd.matrix) {
+        var mm = new THREE.Matrix4().fromArray(nd.matrix);
+        mm.decompose(obj.position, obj.quaternion, obj.scale);
+      } else {
+        if (nd.translation) obj.position.fromArray(nd.translation);
+        if (nd.rotation) obj.quaternion.fromArray(nd.rotation);
+        if (nd.scale) obj.scale.fromArray(nd.scale);
+      }
+      if (nd.mesh != null) {
+        json.meshes[nd.mesh].primitives.forEach(function (pr) {
+          var geo = new THREE.BufferGeometry();
+          geo.setAttribute('position', new THREE.BufferAttribute(glbAccessor(json, bin, pr.attributes.POSITION), 3));
+          if (pr.attributes.NORMAL != null) geo.setAttribute('normal', new THREE.BufferAttribute(glbAccessor(json, bin, pr.attributes.NORMAL), 3));
+          if (pr.indices != null) geo.setIndex(new THREE.BufferAttribute(glbAccessor(json, bin, pr.indices), 1));
+          var mat = pr.material != null ? mats[pr.material] : defMat;
+          var isSkinned = pr.attributes.JOINTS_0 != null && pr.attributes.WEIGHTS_0 != null && nd.skin != null;
+          var mesh;
+          if (isSkinned) {
+            geo.setAttribute('skinIndex', new THREE.BufferAttribute(glbAccessor(json, bin, pr.attributes.JOINTS_0), 4));
+            var w = glbAccessor(json, bin, pr.attributes.WEIGHTS_0);
+            // ウェイトは頂点ごとに合計1に正規化する
+            for (var vi = 0; vi < w.length; vi += 4) {
+              var s = w[vi] + w[vi + 1] + w[vi + 2] + w[vi + 3];
+              if (s > 0) { w[vi] /= s; w[vi + 1] /= s; w[vi + 2] /= s; w[vi + 3] /= s; }
+            }
+            geo.setAttribute('skinWeight', new THREE.BufferAttribute(w, 4));
+            mesh = new THREE.SkinnedMesh(geo, mat);
+            skinnedMeshes.push({ mesh: mesh, skin: nd.skin });
+          } else {
+            mesh = new THREE.Mesh(geo, mat);
+          }
+          obj.add(mesh);
+        });
+      }
+      (nd.children || []).forEach(function (ch) { obj.add(buildNode(ch)); });
+      nodeObjects[idx] = obj;
+      return obj;
+    }
+    var root = new THREE.Group();
+    (json.scenes[json.scene || 0].nodes || []).forEach(function (n) { root.add(buildNode(n)); });
+    root.updateMatrixWorld(true);
+    // スキンをボーンに結び付ける（GLTFLoaderと同じ方式）
+    skinnedMeshes.forEach(function (sm) {
+      var sk = json.skins[sm.skin];
+      var bones = (sk.joints || []).map(function (j) { return nodeObjects[j]; });
+      var ibm = glbAccessor(json, bin, sk.inverseBindMatrices);
+      var ibms = [];
+      for (var i = 0; i < bones.length; i++) ibms.push(new THREE.Matrix4().fromArray(ibm, i * 16));
+      sm.mesh.bind(new THREE.Skeleton(bones, ibms), sm.mesh.matrixWorld);
+    });
+    // アニメーション（ドラゴンのFly）を THREE.AnimationClip にする
+    var clips = [];
+    (json.animations || []).forEach(function (an, ai) {
+      var tracks = [];
+      (an.channels || []).forEach(function (ch) {
+        var smp = an.samplers[ch.sampler];
+        if (!smp) return;
+        var target = nodeObjects[ch.target.node];
+        if (!target) return;
+        var path = ch.target.path;
+        if (path === 'weights') return; // モーフターゲットは非対応
+        var times = glbAccessor(json, bin, smp.input);
+        var values = glbAccessor(json, bin, smp.output);
+        var interp = smp.interpolation || 'LINEAR';
+        if (interp === 'CUBICSPLINE') {
+          // (inTangent, value, outTangent) の3つ組なので真ん中の値だけ使う
+          var nc = path === 'rotation' ? 4 : 3, n = times.length, out = new Float32Array(n * nc);
+          for (var k = 0; k < n; k++) for (var c = 0; c < nc; c++) out[k * nc + c] = values[(k * 3 + 1) * nc + c];
+          values = out;
+          interp = 'LINEAR';
+        }
+        var track = null;
+        if (path === 'rotation') track = new THREE.QuaternionKeyframeTrack(target.name + '.quaternion', times, values);
+        else if (path === 'translation') track = new THREE.VectorKeyframeTrack(target.name + '.position', times, values);
+        else if (path === 'scale') track = new THREE.VectorKeyframeTrack(target.name + '.scale', times, values);
+        if (!track) return;
+        if (interp === 'STEP') track.setInterpolation(THREE.InterpolateDiscrete);
+        tracks.push(track);
+      });
+      if (tracks.length) clips.push(new THREE.AnimationClip(an.name || ('anim' + ai), -1, tracks));
+    });
+    var bb = new THREE.Box3().setFromObject(root);
+    return { root: root, height: Math.max(0.1, bb.max.y - bb.min.y), animations: clips };
+  }
+  // #log（HUD左上）に出す。updateHudがstate.logの末尾3行を表示するので、ここに積む。
+  function glbLog(msg) { state.log.push(msg); }
+  // data URI の base64 を fetch なしで直接 ArrayBuffer にする。
+  // ファイル表示環境では data URI の fetch が弾かれることがあるため。
+  function glbFromDataUri(uri) {
+    var b64 = uri.split(',', 2)[1] || '';
+    var binStr = atob(b64);
+    var buf = new ArrayBuffer(binStr.length);
+    var u8 = new Uint8Array(buf);
+    for (var i = 0; i < binStr.length; i++) u8[i] = binStr.charCodeAt(i);
+    return buf;
+  }
+  function loadAllGLB() {
+    Object.keys(GLB_FILE).forEach(function (kind) {
+      var name = { slime: 'スライム', golem: 'ゴーレム', wyvern: 'ワイバーン' }[kind];
+      var dataUri = window.__GLB_DATA__ && window.__GLB_DATA__[kind];
+      function done() {
+        glbLog(name + 'のモデル読み込みOK');
+        swapGlbMonsters(kind);
+      }
+      function fail() { glbLog(name + 'のモデル読み込み失敗、仮の形で遊ぶよ'); }
+      function handle(buf) {
+        if (kind === 'wyvern') {
+          // スキンメッシュはインスタンスごとに ArrayBuffer からパースし直す
+          // （Skeleton を clone で共有するとボーンが壊れるため）
+          glbRaw.wyvern = buf;
+          glbTemplates.wyvern = { skinned: true };
+        } else {
+          glbTemplates[kind] = parseGLB(buf);
+        }
+        done();
+      }
+      if (dataUri) {
+        // 1ファイル版：fetch を使わず直接デコードする
+        try { handle(glbFromDataUri(dataUri)); }
+        catch (e) { fail(); }
+        return;
+      }
+      fetch('assets/' + GLB_FILE[kind]).then(function (r) {
+        if (!r.ok) throw new Error('glb ' + r.status);
+        return r.arrayBuffer();
+      }).then(function (buf) {
+        handle(buf);
+      }).catch(function () { fail(); });
+    });
+  }
+  loadAllGLB();
+  // GLBが後から読み込めたとき、仮の形で作られていたモンスターを実モデルに差し替える
+  function swapGlbMonsters(kind) {
+    Object.keys(monsterMeshes).forEach(function (id) {
+      var m = null;
+      state.monsters.forEach(function (mm) { if (String(mm.id) === id) m = mm; });
+      if (!m || m.kind !== kind) return;
+      var old = monsterMeshes[id];
+      var ng = makeMonsterGroup(m);
+      ng.position.copy(old.position);
+      scene.remove(old);
+      scene.add(ng);
+      monsterMeshes[id] = ng;
+    });
+  }
+  // 実モデルがあればそれを使い、なければ仮の形。GLBの正面は -Z なので、
+  // 自軍はそのまま（敵＝-Z方向を向く）、敵軍は180度回して +Z を向かせる。
+  // ワイバーンは大きく（2.6倍）して高く浮かせる。モーション用に
+  // 内側のモデルを userData.model に、浮かせる高さを userData.hover に残す。
+  var WYVERN_SCALE = 2.6, WYVERN_HOVER = 1.9;
+  function makeMonsterGroup(m) {
+    var tpl = glbTemplates[m.kind], g = new THREE.Group(), model;
+    if (m.kind === 'wyvern' && tpl) {
+      // スキンメッシュ：インスタンスごとにパースし直し、Flyをループ再生する
+      var parsed = null;
+      try { parsed = parseGLB(glbRaw.wyvern); } catch (e) { parsed = null; }
+      if (parsed) {
+        model = parsed.root;
+        var clip = null, ci;
+        for (ci = 0; ci < parsed.animations.length; ci++) {
+          if (/fly/i.test(parsed.animations[ci].name)) { clip = parsed.animations[ci]; break; }
+        }
+        if (!clip && parsed.animations.length) clip = parsed.animations[0];
+        if (clip) {
+          var mixer = new THREE.AnimationMixer(model);
+          mixer.clipAction(clip).play();
+          g.userData.mixer = mixer;
+        }
+        g.rotation.y = m.side === 'enemy' ? Math.PI : 0;
+      } else {
+        model = KINDS.wyvern();
+      }
+    } else if (tpl) {
+      model = tpl.root.clone(true);
+      g.rotation.y = m.side === 'enemy' ? Math.PI : 0;
+    } else {
+      model = KINDS[m.kind]();
+    }
+    if (m.kind === 'wyvern') {
+      model.scale.setScalar(WYVERN_SCALE);
+      model.position.y = WYVERN_HOVER; // 大きくした分、高く浮かせて飛んでいる感じに
+    }
+    g.add(model);
+    var r = ring(m.side === 'own' ? 0x2f6fd6 : 0xd63a3a);
+    if (m.kind === 'wyvern') r.scale.setScalar(WYVERN_SCALE);
+    g.add(r);
+    g.userData.model = model;
+    g.userData.kind = m.kind;
+    g.userData.hover = m.kind === 'wyvern' ? WYVERN_HOVER : 0;
+    g.traverse(function (o) { o.userData.monsterId = m.id; });
+    return g;
+  }
+  function ring(color) {
+    var r = new THREE.Mesh(new THREE.RingGeometry(0.9, 1.2, 24),
+      new THREE.MeshBasicMaterial({ color: color, side: THREE.DoubleSide }));
+    r.rotation.x = -Math.PI / 2;
+    r.position.y = 0.05;
+    return r;
+  }
+  // ---- ワイバーンの炎（見た目だけ。ダメージは game-logic.js のまま） ----
+  // かみつきの瞬間に、口元から相手へ向けてオレンジ〜黄色の粒を吐く。
+  var fires = [];
+  var fireGeo = new THREE.SphereGeometry(0.13, 6, 5);
+  function spawnFire(m, d) {
+    var mouth = new THREE.Vector3(m.x + d.x * 2.3, 2.4, m.z + d.z * 2.3);
+    var target;
+    if (d.foe) target = new THREE.Vector3(d.foe.x, 1.0, d.foe.z);
+    else target = new THREE.Vector3(0, 2, m.side === 'own' ? -38 : 38);
+    var dir = target.clone().sub(mouth).normalize();
+    for (var i = 0; i < 12; i++) {
+      var mat = new THREE.MeshBasicMaterial({
+        color: i % 2 ? 0xffc21a : 0xff7a1a, transparent: true, opacity: 0.95
+      });
+      var mesh = new THREE.Mesh(fireGeo, mat);
+      mesh.position.copy(mouth);
+      scene.add(mesh);
+      var spread = new THREE.Vector3((Math.random() - 0.5) * 2.5, (Math.random() - 0.5) * 1.6, (Math.random() - 0.5) * 2.5);
+      fires.push({
+        mesh: mesh,
+        vel: dir.clone().multiplyScalar(13 + Math.random() * 7).add(spread),
+        t: 0, dur: 0.4 + Math.random() * 0.2
+      });
+    }
+  }
+  function updateFires(dt) {
+    for (var i = fires.length - 1; i >= 0; i--) {
+      var f = fires[i];
+      f.t += dt;
+      var k = Math.min(1, f.t / f.dur);
+      f.mesh.position.addScaledVector(f.vel, dt);
+      f.vel.y += 1.2 * dt;
+      var s = 1 + k * 1.4;
+      f.mesh.scale.set(s, s, s);
+      f.mesh.material.opacity = 0.95 * (1 - k);
+      if (k >= 1) {
+        scene.remove(f.mesh);
+        f.mesh.material.dispose();
+        fires.splice(i, 1);
+      }
+    }
+  }
+  // ---- モンスターのモーション（見た目だけ。ダメージ判定は game-logic.js のまま） ----
+  // スライム：ぴょんぴょんジャンプしながら進む。攻撃時は相手へ体当たりして跳ね返る。
+  // ワイバーン：上下にゆらゆら浮き沈み＋傾きで飛ぶ。攻撃時はかみつき＋炎を吐く。
+  // 攻撃の検知：各モンスターの cool は攻撃時に1にリセットされるので、
+  // 前フレームより大きく跳ね上がったら「今攻撃した」とみなす。
+  var animState = {}; // id -> {phase, prevCool, prevX, prevZ, attackT, dirX, dirZ, hopY, squash, seed}
+  function nearestFoe(m) {
+    var best = null, bd = 1e9;
+    state.monsters.forEach(function (o) {
+      if (o.side === m.side) return;
+      var d = Math.abs(o.z - m.z) + Math.abs(o.x - m.x);
+      if (d < bd) { bd = d; best = o; }
+    });
+    return best;
+  }
+  function attackDir(m) {
+    var foe = nearestFoe(m);
+    if (foe) {
+      var dx = foe.x - m.x, dz = foe.z - m.z, len = Math.sqrt(dx * dx + dz * dz) || 1;
+      return { x: dx / len, z: dz / len, foe: foe };
+    }
+    return { x: 0, z: m.side === 'own' ? -1 : 1, foe: null };
+  }
+  function syncMonsters(now, dt) {
+    var alive = {};
+    state.monsters.forEach(function (m) {
+      alive[m.id] = true;
+      var g = monsterMeshes[m.id];
+      if (!g) {
+        g = makeMonsterGroup(m);
+        scene.add(g);
+        monsterMeshes[m.id] = g;
+      }
+      var a = animState[m.id];
+      if (!a) {
+        a = animState[m.id] = {
+          phase: Math.random() * 6.28, prevCool: m.cool, prevX: m.x, prevZ: m.z,
+          attackT: 99, dirX: 0, dirZ: m.side === 'own' ? -1 : 1,
+          hopY: 0, squash: 99, seed: Math.random() * 10
+        };
+      }
+      // 攻撃した瞬間を検知（cool が1近くに跳ね上がった）
+      if (m.cool > 0.9 && a.prevCool < 0.5 && a.attackT > 0.3) {
+        var d = attackDir(m);
+        a.dirX = d.x; a.dirZ = d.z;
+        a.attackT = 0;
+        if (m.kind === 'wyvern') spawnFire(m, d);
+      }
+      a.prevCool = m.cool;
+      a.attackT += dt;
+      // ワイバーンのはばたき（スキンアニメーション）を進める
+      if (g.userData.mixer) g.userData.mixer.update(dt);
+      // 攻撃モーション：素早く前に出て、跳ね返るように戻る（0.5秒）
+      var lunge = 0;
+      if (a.attackT < 0.5 && (m.kind === 'slime' || m.kind === 'wyvern')) {
+        var k = a.attackT / 0.5;
+        lunge = Math.sin(k * Math.PI) * (m.kind === 'wyvern' ? 1.6 : 1.1);
+      }
+      g.position.set(m.x + a.dirX * lunge, 0, m.z + a.dirZ * lunge);
+      var model = g.userData.model, hover = g.userData.hover || 0;
+      if (model) {
+        if (m.kind === 'slime') {
+          // ジャンプ：進んだ距離に合わせてぴょんぴょん跳ねる
+          var dist = Math.sqrt((m.x - a.prevX) * (m.x - a.prevX) + (m.z - a.prevZ) * (m.z - a.prevZ));
+          var prevSin = Math.sin(a.phase);
+          a.phase += dist * 2.4;
+          if (prevSin > 0 && Math.sin(a.phase) <= 0) a.squash = 0; // 着地した瞬間
+          a.squash += dt;
+          var hopTarget = dist > 0.001 ? Math.abs(Math.sin(a.phase)) * 0.45 : 0;
+          a.hopY += (hopTarget - a.hopY) * Math.min(1, dt * 14);
+          model.position.y = a.hopY;
+          var sxz = 1 - 0.07 * (a.hopY / 0.45);
+          var sy = 1 + 0.18 * (a.hopY / 0.45);
+          if (a.squash < 0.2) sy -= 0.22 * Math.sin((a.squash / 0.2) * Math.PI);
+          model.scale.set(sxz, sy, sxz);
+        } else if (m.kind === 'wyvern') {
+          // 飛行：ゆらゆら浮き沈み＋少し傾けながら進む
+          var t = now / 1000;
+          model.position.y = hover + Math.sin(t * 2.2 + a.seed) * 0.25;
+          var biteK = a.attackT < 0.5 ? Math.sin((a.attackT / 0.5) * Math.PI) : 0;
+          model.rotation.x = 0.05 + Math.sin(t * 2.0 + a.seed) * 0.04 - 0.35 * biteK;
+          model.rotation.z = Math.sin(t * 1.6 + a.seed) * 0.07;
+        }
+      }
+      a.prevX = m.x; a.prevZ = m.z;
+    });
+    Object.keys(monsterMeshes).forEach(function (id) {
+      if (!alive[id]) {
+        scene.remove(monsterMeshes[id]);
+        delete monsterMeshes[id];
+        delete animState[id];
+      }
+    });
+  }
+
+  // ---- プレイヤー操作 ----
+  var yaw = 0, pitch = 0, keys = {};
+  var playerPos = { x: 0, z: 32 };
+  function resetPlayer() { playerPos.x = 0; playerPos.z = 32; yaw = 0; pitch = 0; }
+  document.addEventListener('keydown', function (e) {
+    keys[e.code] = true;
+    if (e.code === 'Digit1') trySummon('slime');
+    if (e.code === 'Digit2') trySummon('golem');
+    if (e.code === 'Digit3') trySummon('wyvern');
+    if (e.code === 'Escape') {
+      // ロック中のESCはブラウザが処理してロックを外す（pointerlockchangeで拾う）。
+      // ロックが使えない環境のフォールバック中は、ここでカーソルを戻す。
+      if (document.pointerLockElement !== canvas && isPlaying() && lockFailed) {
+        cursorShown = true;
+        refreshCursor();
+      }
+    }
+  });
+  document.addEventListener('keyup', function (e) { keys[e.code] = false; });
+  // ---- 視点移動と射撃（ADS含む） ----
+  // 視点はマウス移動だけ。左クリックは単発（押した瞬間の1発）。
+  // 長押ししても連射しない。連打すればその分だけ撃てる（クールダウン0.3秒はそのまま）。
+  // ポインタロック中：mousemoveで視点。取れていないとき：何も押していない
+  // マウス移動（e.buttons === 0）で視点。左クリックを押しながら動かしても視点は回さない。
+  // 右クリック長押し＝ADS：FOVを75→50に絞り、感度と移動速度を落とす。
+  var lastX = 0, lastY = 0, lastInit = false, ads = false;
+  function lookSens() { return ads ? 0.0012 : 0.0025; }
+  function setAds(v) {
+    ads = v;
+    document.getElementById('cross').classList.toggle('ads', ads);
+  }
+  document.addEventListener('mousemove', function (e) {
+    // 最初の1回は基準位置だけ記録する（初期値0,0からの大ジャンプ防止）
+    if (!lastInit) { lastX = e.clientX; lastY = e.clientY; lastInit = true; return; }
+    if (document.pointerLockElement === canvas) {
+      yaw -= e.movementX * lookSens();
+      pitch -= e.movementY * lookSens();
+    } else if (e.buttons === 0) {
+      yaw -= (e.clientX - lastX) * lookSens() * 1.6;
+      pitch -= (e.clientY - lastY) * lookSens() * 1.6;
+    } else { lastX = e.clientX; lastY = e.clientY; return; }
+    lastX = e.clientX; lastY = e.clientY;
+    pitch = Math.max(-1.5, Math.min(1.5, pitch));
+  });
+  canvas.addEventListener('mousedown', function (e) {
+    if (e.button === 0) {
+      // 左クリック：単発。カーソルを消し直してからポインタロックを試み、1発撃つ。
+      // 長押ししても連射しない。連打すればその分だけ撃てる。
+      cursorShown = false;
+      refreshCursor();
+      safePointerLock();
+      shoot();
+    } else if (e.button === 2) {
+      setAds(true);
+    }
+  });
+  document.addEventListener('mouseup', function (e) {
+    if (e.button === 2) setAds(false);
+  });
+  // 右クリックのメニューは出さない
+  canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+  // 画面から離れたらADSを解除（ADSのままにならないように）
+  window.addEventListener('blur', function () { setAds(false); });
+  document.addEventListener('mouseleave', function () { setAds(false); });
+  document.querySelectorAll('.sum').forEach(function (el) {
+    el.addEventListener('click', function () { trySummon(el.getAttribute('data-kind')); });
+  });
+  document.getElementById('startBtn').addEventListener('click', function () {
+    document.getElementById('start').classList.add('hidden');
+    safePointerLock();
+  });
+  document.getElementById('againBtn').addEventListener('click', function () {
+    Object.keys(monsterMeshes).forEach(function (id) { scene.remove(monsterMeshes[id]); });
+    monsterMeshes = {};
+    // 残っている弾・フラッシュ・炎も消す
+    bullets.forEach(function (b) { scene.remove(b.mesh); scene.remove(b.line); });
+    bullets.length = 0;
+    flashes.forEach(function (f) { scene.remove(f.mesh); });
+    flashes.length = 0;
+    fires.forEach(function (f) { scene.remove(f.mesh); f.mesh.material.dispose(); });
+    fires.length = 0;
+    state = L.createGame();
+    resetPlayer();
+    setAds(false);
+    document.getElementById('end').classList.add('hidden');
+    cursorShown = false;
+    safePointerLock();
+    refreshCursor();
+  });
+  window.addEventListener('resize', function () {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  var raycaster = new THREE.Raycaster();
+  function shootables() {
+    var list = [];
+    // 敵の本丸：石垣・天守・屋根（userData.type='base' のものだけ）
+    enemyBaseGroup.traverse(function (o) { if (o.isMesh && o.userData.type === 'base') list.push(o); });
+    Object.keys(monsterMeshes).forEach(function (id) {
+      // GLBは子グループの中にメッシュがあるので、traverseで全部集める
+      monsterMeshes[id].traverse(function (o) { if (o.isMesh) list.push(o); });
+    });
+    return list;
+  }
+  // ---- プレイヤーの弾（見えるトレーサー＋着弾フラッシュ） ----
+  // 今まではヒットスキャンだけで、クロスヘアが×になるだけだった。
+  // 撃った瞬間に銃口から着弾点（外れたときは射程45の先）まで飛ぶ光る弾を出す。
+  // 敵AIの赤い線と区別するため、プレイヤーの弾は黄色・白系。
+  var bullets = []; // {mesh, line, from, to, t, dur, hit}
+  var flashes = []; // {mesh, t, dur, max}
+  var bulletGeo = new THREE.SphereGeometry(0.09, 8, 6);
+  var bulletMat = new THREE.MeshBasicMaterial({ color: 0xffe14d });
+  function spawnBullet(from, to, hit) {
+    var mesh = new THREE.Mesh(bulletGeo, bulletMat);
+    mesh.position.copy(from);
+    scene.add(mesh);
+    var lg = new THREE.BufferGeometry();
+    lg.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+      from.x, from.y, from.z, from.x, from.y, from.z
+    ]), 3));
+    var line = new THREE.Line(lg, new THREE.LineBasicMaterial({
+      color: 0xffe14d, transparent: true, opacity: 0.9
+    }));
+    scene.add(line);
+    var dist = from.distanceTo(to);
+    bullets.push({
+      mesh: mesh, line: line, from: from.clone(), to: to.clone(),
+      t: 0, dur: Math.max(0.06, dist / 90), hit: hit
+    });
+  }
+  function spawnFlash(p, big) {
+    var mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(big ? 0.35 : 0.18, 10, 8),
+      new THREE.MeshBasicMaterial({ color: 0xfff6b0, transparent: true, opacity: 0.95 })
+    );
+    mesh.position.copy(p);
+    scene.add(mesh);
+    flashes.push({ mesh: mesh, t: 0, dur: big ? 0.22 : 0.15, max: big ? 0.35 : 0.18 });
+  }
+  function updateBullets(dt) {
+    for (var i = bullets.length - 1; i >= 0; i--) {
+      var b = bullets[i];
+      b.t += dt;
+      var k = Math.min(1, b.t / b.dur);
+      var p = b.from.clone().lerp(b.to, k);
+      b.mesh.position.copy(p);
+      var lp = b.line.geometry.attributes.position.array;
+      // 線は銃口から弾の現在位置まで伸びる
+      lp[3] = p.x; lp[4] = p.y; lp[5] = p.z;
+      b.line.geometry.attributes.position.needsUpdate = true;
+      b.line.material.opacity = 0.9 * (1 - k * 0.7);
+      if (k >= 1) {
+        if (b.hit) spawnFlash(b.to, true);
+        scene.remove(b.mesh);
+        scene.remove(b.line);
+        b.line.geometry.dispose();
+        bullets.splice(i, 1);
+      }
+    }
+    for (var j = flashes.length - 1; j >= 0; j--) {
+      var f = flashes[j];
+      f.t += dt;
+      var kk = Math.min(1, f.t / f.dur);
+      var s = 1 + kk * 1.6;
+      f.mesh.scale.set(s, s, s);
+      f.mesh.material.opacity = 0.95 * (1 - kk);
+      if (kk >= 1) {
+        scene.remove(f.mesh);
+        f.mesh.geometry.dispose();
+        f.mesh.material.dispose();
+        flashes.splice(j, 1);
+      }
+    }
+  }
+  function shoot() {
+    if (state.over || !state.player.alive || state.player.cool > 0) return;
+    raycaster.setFromCamera({ x: 0, y: 0 }, camera);
+    raycaster.far = L.CONFIG.gunRange;
+    var hits = raycaster.intersectObjects(shootables(), false);
+    var dir = new THREE.Vector3();
+    camera.getWorldDirection(dir);
+    var muzzle = camera.position.clone().addScaledVector(dir, 0.6);
+    muzzle.y -= 0.12;
+    var end, hitPoint = null;
+    if (hits.length) {
+      hitPoint = hits[0].point;
+      end = hitPoint;
+    } else {
+      end = camera.position.clone().addScaledVector(dir, L.CONFIG.gunRange);
+    }
+    spawnBullet(muzzle, end, !!hitPoint);
+    if (!hits.length) return;
+    var o = hits[0].object;
+    var ok = false;
+    if (o.userData.type === 'base') ok = L.shoot(state, { type: 'base' });
+    else if (o.userData.monsterId) ok = L.shoot(state, { type: 'monster', id: o.userData.monsterId });
+    if (ok) flash('＋');
+  }
+  function flash(t) {
+    var c = document.getElementById('cross');
+    c.textContent = '×';
+    setTimeout(function () { c.textContent = '＋'; }, 80);
+  }
+  function trySummon(kind) {
+    if (state.over || !state.player.alive) return;
+    var m = L.summon(state, 'own', kind);
+    if (!m) {
+      var why = !L.unlockedAt(state, kind)
+        ? kindName(kind) + 'はまだ呼べないよ（' + Math.ceil(L.CONFIG.unlockAt[kind] - state.time) + '秒後）'
+        : 'エネルギーが足りないよ';
+      showMsg(why);
+    }
+  }
+  function kindName(k) { return { slime: 'スライム', golem: 'ゴーレム', wyvern: 'ワイバーン' }[k]; }
+  var msgTimer = null;
+  function showMsg(t) {
+    document.getElementById('msg').textContent = t;
+    if (msgTimer) clearTimeout(msgTimer);
+    msgTimer = setTimeout(function () { document.getElementById('msg').textContent = ''; }, 2000);
+  }
+
+  // ---- HUD ----
+  function fmt(s) { s = Math.ceil(s); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+  function updateHud() {
+    document.getElementById('timer').textContent = fmt(L.timeLeft(state));
+    document.getElementById('ownHpBar').firstElementChild.style.width =
+      Math.max(0, state.base.own / L.CONFIG.baseHp * 100) + '%';
+    document.getElementById('enemyHpBar').firstElementChild.style.width =
+      Math.max(0, state.base.enemy / L.CONFIG.baseHp * 100) + '%';
+    document.getElementById('energyBar').firstElementChild.style.width =
+      (state.energy / L.CONFIG.energyMax * 100) + '%';
+    document.getElementById('xp').textContent =
+      'エネルギー ' + Math.floor(state.energy) + ' / 100　Lv' + state.level +
+      '（敵Lv' + state.enemyLevel + '）　経験値 ' + state.xp + '/' + state.xpNext +
+      '　自軍本丸 ' + Math.max(0, Math.round(state.base.own)) +
+      '　敵本丸 ' + Math.max(0, Math.round(state.base.enemy));
+    document.getElementById('hp').textContent = state.player.alive
+      ? 'HP ' + Math.max(0, Math.round(state.player.hp))
+      : 'やられた！ リスポーンまで ' + Math.ceil(state.player.respawnIn) + '秒';
+    document.querySelectorAll('.sum').forEach(function (el) {
+      var k = el.getAttribute('data-kind');
+      var c = L.costOf(state, k);
+      el.querySelector('.cost').textContent = c === 0 ? 'コスト 無料' : 'コスト ' + c;
+      el.classList.toggle('locked', !L.canSummon(state, k));
+    });
+    var log = state.log.slice(-3).join('<br>');
+    document.getElementById('log').innerHTML = log;
+  }
+
+  // ---- メインループ ----
+  var last = performance.now(), aiTimer = 0;
+  function loop(now) {
+    requestAnimationFrame(loop);
+    var dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    if (!document.getElementById('start').classList.contains('hidden')) {
+      renderer.render(scene, camera);
+      return;
+    }
+    if (!state.over) {
+      // 移動（ADS中は歩きが遅い）
+      if (state.player.alive) {
+        var sp = (ads ? 3.5 : 6) * dt, f = 0, r = 0;
+        if (keys['KeyW']) f += 1;
+        if (keys['KeyS']) f -= 1;
+        if (keys['KeyD']) r += 1;
+        if (keys['KeyA']) r -= 1;
+        var sin = Math.sin(yaw), cos = Math.cos(yaw);
+        playerPos.x += (-sin * f + cos * r) * sp;
+        playerPos.z += (-cos * f - sin * r) * sp;
+        playerPos.x = Math.max(-14, Math.min(14, playerPos.x));
+        playerPos.z = Math.max(-36, Math.min(36, playerPos.z));
+        L.setPlayerPos(state, playerPos.x, playerPos.z);
+      }
+      L.tick(state, dt);
+      // 端ステアリング（ロックが使えない環境のフォールバック）：
+      // マウスが画面の左右・上下の端（40px以内）にある間、その方向へ視点を
+      // 回し続ける。端に近いほど速く回る。ロック無しでも無制限に回せる。
+      // カーソルを戻しているとき（ESC後）は回さない。
+      if (lockFailed && !cursorShown && document.pointerLockElement !== canvas && lastInit) {
+        var ex = 40, ey = 40, es = 2.2;
+        if (lastX < ex) yaw += es * dt * (1 - lastX / ex);
+        else if (lastX > window.innerWidth - ex) yaw -= es * dt * (1 - (window.innerWidth - lastX) / ex);
+        if (lastY < ey) pitch += es * dt * (1 - lastY / ey);
+        else if (lastY > window.innerHeight - ey) pitch -= es * dt * (1 - (window.innerHeight - lastY) / ey);
+        pitch = Math.max(-1.5, Math.min(1.5, pitch));
+      }
+      // ロック要求から1秒たってもロックが取れず、成功も失敗も通知が来ない
+      // 環境では、使えないものとしてフォールバックに切り替える。
+      if (!lockEverSucceeded && !lockFailed && lockRequestedAt &&
+          isPlaying() && document.pointerLockElement !== canvas &&
+          now - lockRequestedAt > 1000) {
+        lockFailed = true;
+        refreshCursor();
+      }
+      // 敵AIの射手：プレイヤーが前線にいると1.5秒ごとに撃ってくる
+      aiTimer += dt;
+      if (aiTimer >= 1.5) {
+        aiTimer = 0;
+        if (state.player.alive && playerPos.z < 10) {
+          L.enemyShoot(state);
+          var p = tracer.geometry.attributes.position.array;
+          p[0] = shooter.position.x; p[1] = 2; p[2] = shooter.position.z;
+          p[3] = playerPos.x; p[4] = 1.7; p[5] = playerPos.z;
+          tracer.geometry.attributes.position.needsUpdate = true;
+          tracer.material.opacity = 0.9;
+          tracerUntil = now + 120;
+        }
+      }
+      if (now > tracerUntil) tracer.material.opacity = 0;
+      // 射手は左右にうろうろ
+      shooter.position.x = Math.sin(now / 900) * 6;
+      // 雨を降らせる
+      var rp = rain.geometry.attributes.position.array;
+      for (var i = 0; i < rainCount; i++) {
+        rp[i * 3 + 1] -= dt * 18;
+        if (rp[i * 3 + 1] < 0) rp[i * 3 + 1] = 30;
+      }
+      rain.geometry.attributes.position.needsUpdate = true;
+      if (!state.player.alive) { playerPos.x = 0; playerPos.z = 32; }
+    }
+    camera.position.set(playerPos.x, 1.7, playerPos.z);
+    camera.rotation.set(pitch, yaw, 0);
+    // ADS中はFOVを75→50に絞ってズーム。急変させずなめらかに寄せる
+    var targetFov = ads ? 50 : 75;
+    if (Math.abs(camera.fov - targetFov) > 0.05) {
+      camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 10);
+      camera.updateProjectionMatrix();
+    }
+    updateBullets(dt);
+    updateFires(dt);
+    syncMonsters(now, dt);
+    updateHud();
+    if (state.over) {
+      setAds(false);
+      document.exitPointerLock();
+      var t = { win: '勝ち！敵の本丸を壊したよ', lose: '負け…自軍の本丸が壊れたよ', draw: '引き分け' }[state.result];
+      document.getElementById('endTitle').textContent = t;
+      document.getElementById('endStats').textContent =
+        'Lv' + state.level + '　倒したモンスター ' + state.kills + '体　召喚 ' + state.summons + '回　' +
+        '自軍本丸 ' + Math.max(0, Math.round(state.base.own)) + '　敵本丸 ' + Math.max(0, Math.round(state.base.enemy));
+      document.getElementById('end').classList.remove('hidden');
+      refreshCursor(); // 終了画面ではカーソルを戻す
+    }
+    renderer.render(scene, camera);
+  }
+  resetPlayer();
+  camera.position.set(0, 1.7, 32);
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
